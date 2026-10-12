@@ -25,6 +25,8 @@ img { max-width: 100%; }
   --muted: #56687a;
   --faint: #8d9cab;
   --card: #ffffff;
+  --wait-bg: #24548f;
+  --wait-ink: #ffffff;
   --line: #c9d4dc;
   --soon-bg: #f3b433;
   --soon-ink: #2a1c00;
@@ -37,6 +39,7 @@ img { max-width: 100%; }
   :root:not([data-theme="light"]) {
     --bg: #0f1820; --ink: #e9eff4; --muted: #9fb0bf; --faint: #66798a;
     --card: #1a2632; --line: #2c3a47;
+    --wait-bg: #2d63ab; --wait-ink: #ffffff;
     --soon-bg: #e8a92a; --soon-ink: #1f1500;
     --now-bg: #2a8a62; --now-ink: #ffffff;
     color-scheme: dark;
@@ -45,6 +48,7 @@ img { max-width: 100%; }
 :root[data-theme="dark"] {
   --bg: #0f1820; --ink: #e9eff4; --muted: #9fb0bf; --faint: #66798a;
   --card: #1a2632; --line: #2c3a47;
+  --wait-bg: #2d63ab; --wait-ink: #ffffff;
   --soon-bg: #e8a92a; --soon-ink: #1f1500;
   --now-bg: #2a8a62; --now-ink: #ffffff;
   color-scheme: dark;
@@ -84,8 +88,8 @@ body {
 
 /* Primary card */
 .card {
-  background: var(--card);
-  color: var(--ink);
+  background: var(--wait-bg);
+  color: var(--wait-ink);
   border-radius: 28px;
   min-width: 0;
   padding: clamp(22px, 5vw, 48px);
@@ -105,7 +109,7 @@ body {
   line-height: 1.15;
   letter-spacing: 0;
   padding: .12em .5em; border-radius: 999px;
-  background: var(--ink); color: var(--card);
+  background: var(--wait-ink); color: var(--wait-bg);
 }
 .card.soon .tag { background: var(--soon-ink); color: var(--soon-bg); }
 .card.now .tag, .card.go .tag { background: var(--now-ink); color: var(--now-bg); }
