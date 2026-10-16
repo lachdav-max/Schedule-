@@ -2,6 +2,39 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script>
+/* ===== SETTINGS: edit here. Everything below this block is the page itself. ===== */
+const SCHEDULE = [
+  // instruction: shown in the pill on a green card from the 15-minute warning. No instruction = "Coming Up Soon".
+  // date: "YYYY-MM-DD" = only on that date (e.g. a haircut). No date = every day.
+  // days: ["Mon", "Thu"] = only on those weekdays. No days = every day.
+  { time: "07:00", name: "Nurse's station", instruction: "Go Downstairs Now" },
+  { time: "07:30", name: "Breakfast",       instruction: "Go Downstairs Now" },
+  // reassure: true = while waiting, a REASSURE message (below) shows under the countdown
+  { time: "11:15", name: "Lunch",           instruction: "Go Downstairs Now", reassure: true },
+  { time: "14:00", name: "Afternoon meds",  instruction: "Go Downstairs Now" },
+  { time: "16:15", name: "Supper",          instruction: "Go Downstairs Now", reassure: true },
+  // message: "..." = this item's own line under the countdown, shown whenever it's on the card
+  { time: "19:00", name: "Mark's Sing Song",  message: "See if Mark is having a sing song tonight." },
+  { time: "20:00", name: "Nighttime meds" },
+  // One-off items (each shows only on its date)
+  { time: "12:30", name: "Haircut",          instruction: "Go Downstairs Now", date: "2026-10-21" },
+];
+const NOW_MINUTES = 15;   // how long an item shows as "Now"
+const SOON_MINUTES = 15;  // warning before an item
+
+// Waiting messages for items with reassure: true. First match wins.
+const REASSURE = [
+  { moreThan: 30, text: "Plenty of Time. Relax." },  // more than 30 minutes away
+  { moreThan: 15, text: "Soon. Get Ready." },        // 15 to 30 minutes away
+];
+
+// Lists under the main card: true = show, false = hide
+const SHOW_DONE = true;      // "Done today"
+const SHOW_LATER = true;     // "Later today"
+const SHOW_TOMORROW = false; // "Tomorrow" (and "Later tomorrow" once today's items are finished)
+const SHOW_UPCOMING = true;  // "Not Today": every future item that has a date
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -161,6 +194,9 @@ body {
   font-size: clamp(1rem, 3.4vw, 1.25rem);
 }
 .path .t { font-variant-numeric: tabular-nums; min-width: 5.2em; }
+/* "Not Today": same muted text as Later Today, two lines per event */
+.path.upcoming { gap: 14px; }
+.path.upcoming li { display: grid; gap: 2px; }
 
 @media (min-width: 900px) and (orientation: landscape) {
   /* Wide screens: card fixed on the left; Done, Later, Tomorrow read in order down the right */
@@ -196,38 +232,6 @@ body {
 </main>
 
 <script>
-/* ===== Schedule: edit here ===== */
-const SCHEDULE = [
-  // instruction: shown in the pill on a green card from the 15-minute warning. No instruction = "Coming Up Soon".
-  // date: "YYYY-MM-DD" = only on that date (e.g. a haircut). No date = every day.
-  // days: ["Mon", "Thu"] = only on those weekdays. No days = every day.
-  { time: "07:00", name: "Nurse's station", instruction: "Go Downstairs Now" },
-  { time: "07:30", name: "Breakfast",       instruction: "Go Downstairs Now" },
-  // reassure: true = while waiting, a REASSURE message (below) shows under the countdown
-  { time: "11:15", name: "Lunch",           instruction: "Go Downstairs Now", reassure: true },
-  { time: "14:00", name: "Afternoon meds",  instruction: "Go Downstairs Now" },
-  { time: "16:15", name: "Supper",          instruction: "Go Downstairs Now", reassure: true },
-  // message: "..." = this item's own line under the countdown, shown whenever it's on the card
-  { time: "19:00", name: "Mark's Sing Song",  message: "See if Mark is having a sing song tonight." },
-  { time: "20:00", name: "Nighttime meds" },
-  // One-off items (each shows only on its date)
-  { time: "12:30", name: "Haircut",          instruction: "Go Downstairs Now", date: "2026-10-21" },
-];
-const NOW_MINUTES = 15;   // how long an item shows as "Now"
-const SOON_MINUTES = 15;  // warning before an item
-
-// Waiting messages for items with reassure: true. First match wins.
-const REASSURE = [
-  { moreThan: 30, text: "Plenty of Time. Relax." },  // more than 30 minutes away
-  { moreThan: 15, text: "Soon. Get Ready." },        // 15 to 30 minutes away
-];
-
-// Lists under the main card: true = show, false = hide
-const SHOW_DONE = true;      // "Done today"
-const SHOW_LATER = true;     // "Later today"
-const SHOW_TOMORROW = false; // "Tomorrow" (and "Later tomorrow" once today's items are finished)
-
-
 /* ===== Logic ===== */
 function atTime(base, hhmm, dayOffset) {
   const [h, m] = hhmm.split(":").map(Number);
@@ -334,30 +338,63 @@ function render() {
     } else if (SHOW_TOMORROW && st.rest.length) {
       sections.push({ title: "Later tomorrow", items: st.rest });
     }
-    let n = 0;
-    $("laterWrap").innerHTML = sections.map(sec =>
-      "<h2>" + sec.title + '</h2><ol class="path">' + sec.items.map(s => {
-        const o = sec.faint ? "0.50" : Math.max(0.45, 1 - (n++) * 0.13).toFixed(2);
-        return '<li style="opacity:' + o + '"><span class="t">' + fmtTime(s.time) + '</span><span>' + s.name + '</span></li>';
-      }).join("") + "</ol>"
+    // Later Today and Not Today: no fading; items use the same muted grey as the headings
+    let html = sections.map(sec =>
+      "<h2>" + sec.title + '</h2><ol class="path">' + sec.items.map(s =>
+        '<li><span class="t">' + fmtTime(s.time) + '</span><span>' + s.name + '</span></li>'
+      ).join("") + "</ol>"
     ).join("");
-    $("laterWrap").hidden = sections.length === 0;
+    // "Not Today": every one-off (dated) item after today, however far ahead
+    const ups = SHOW_UPCOMING ? upcomingAfter(now) : [];
+    if (ups.length) {
+      html += '<h2>Not Today</h2><ol class="path upcoming">' + ups.map(u =>
+        '<li><span class="ev-name">' + u.name + " " + u.rel + '</span><span class="ev-when">' + u.when + "</span></li>").join("") + "</ol>";
+    }
+    $("laterWrap").innerHTML = html;
+    $("laterWrap").hidden = html === "";
     fitLater();
   }
 }
 
-/* Show only the later items that fit fully on screen; drop a heading left with no items */
+/* Future one-off items, soonest first, with their full date and how many days away */
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+function upcomingAfter(now) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return SCHEDULE.filter(s => s.date)
+    .map(s => {
+      const [y, mo, d] = s.date.split("-").map(Number);
+      const day = new Date(y, mo - 1, d);
+      const diff = Math.round((day - today) / 86400000);
+      return { ...s, day, diff };
+    })
+    .filter(u => u.diff >= 1)
+    .sort((a, b) => a.day - b.day || a.time.localeCompare(b.time))
+    .map(u => ({
+      name: u.name,
+      rel: u.diff === 1 ? "tomorrow" : "in " + u.diff + " days",
+      when: DAYS[u.day.getDay()] + ", " + MONTHS[u.day.getMonth()] + " " + u.day.getDate() + " at " + fmtTime(u.time),
+    }));
+}
+
+/* Fit the lists to the screen. Drop order when space is short:
+   Later Today from the end (keeping its first item), then Not Today from the end,
+   then the first Later Today item last. A heading left with no items is hidden. */
 function fitLater() {
   const wrap = $("laterWrap");
-  const els = wrap.querySelectorAll("h2, li");
-  els.forEach(e => { e.hidden = false; });
-  const bottom = wrap.getBoundingClientRect().bottom;
-  let cut = false;
-  els.forEach(e => { if (cut || e.getBoundingClientRect().bottom > bottom + 0.5) { cut = true; e.hidden = true; } });
-  wrap.querySelectorAll("h2").forEach(h => {
+  wrap.querySelectorAll("h2, li").forEach(e => { e.hidden = false; });
+  const fits = () => wrap.scrollHeight <= wrap.clientHeight + 1;
+  const hideHeadings = () => wrap.querySelectorAll("h2").forEach(h => {
     const ol = h.nextElementSibling;
-    if (!ol || !ol.querySelector("li:not([hidden])")) h.hidden = true;
+    h.hidden = !ol || !ol.querySelector("li:not([hidden])");
   });
+  const later = [...wrap.querySelectorAll(".path:not(.upcoming) li")];
+  const ups = [...wrap.querySelectorAll(".upcoming li")];
+  const order = later.slice(1).reverse().concat(ups.reverse(), later.slice(0, 1));
+  for (const li of order) {
+    if (fits()) break;
+    li.hidden = true;
+    hideHeadings();
+  }
 }
 
 /* Size the pill text so the longest possible label fills the card on one line; every state uses that same size */
