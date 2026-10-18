@@ -10,7 +10,9 @@ const SCHEDULE = [
   // days: ["Mon", "Thu"] = only on those weekdays. No days = every day.
   { time: "07:00", name: "Nurse's station", instruction: "Go Downstairs Now" },
   { time: "07:30", name: "Breakfast",       instruction: "Go Downstairs Now" },
-  // reassure: true = while waiting, a REASSURE message (below) shows under the countdown
+  // soon: 5 = this item's warning starts 5 minutes before instead of SOON_MINUTES
+  { time: "09:00", name: "Tea with Lachlan", instruction: "Go Downstairs Now", days: ["Sun"], soon: 5 },
+  // reassure: true / false = turn the REASSURE messages (below) on or off for one item, overriding REASSURE_ALL
   { time: "11:15", name: "Lunch",           instruction: "Go Downstairs Now", reassure: true },
   { time: "14:00", name: "Afternoon meds",  instruction: "Go Downstairs Now" },
   { time: "16:15", name: "Supper",          instruction: "Go Downstairs Now", reassure: true },
@@ -23,7 +25,8 @@ const SCHEDULE = [
 const NOW_MINUTES = 15;   // how long an item shows as "Now"
 const SOON_MINUTES = 15;  // warning before an item
 
-// Waiting messages for items with reassure: true. First match wins.
+// Waiting messages shown under the countdown. First match wins.
+const REASSURE_ALL = true;  // true = every item gets these, unless its line says reassure: false
 const REASSURE = [
   { moreThan: 30, text: "Plenty of Time. Relax." },  // more than 30 minutes away
   { moreThan: 15, text: "Soon. Get Ready." },        // 15 to 30 minutes away
@@ -34,6 +37,9 @@ const SHOW_DONE = true;      // "Done today"
 const SHOW_LATER = true;     // "Later today"
 const SHOW_TOMORROW = false; // "Tomorrow" (and "Later tomorrow" once today's items are finished)
 const SHOW_UPCOMING = true;  // "Not Today": every future item that has a date
+
+// Tapping a Later Today or Not Today item shows it as a pop-up card for this many seconds
+const POPUP_SECONDS = 5;
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -61,6 +67,7 @@ img { max-width: 100%; }
   --wait-bg: #24548f;
   --wait-ink: #ffffff;
   --line: #c9d4dc;
+  --scrim: rgba(19, 38, 58, .45);
   --soon-bg: #f3b433;
   --soon-ink: #2a1c00;
   --now-bg: #1d6a4c;
@@ -73,6 +80,7 @@ img { max-width: 100%; }
     --bg: #0f1820; --ink: #e9eff4; --muted: #9fb0bf; --faint: #66798a;
     --card: #1a2632; --line: #2c3a47;
     --wait-bg: #2d63ab; --wait-ink: #ffffff;
+    --scrim: rgba(0, 0, 0, .6);
     --soon-bg: #e8a92a; --soon-ink: #1f1500;
     --now-bg: #2a8a62; --now-ink: #ffffff;
     color-scheme: dark;
@@ -82,6 +90,7 @@ img { max-width: 100%; }
   --bg: #0f1820; --ink: #e9eff4; --muted: #9fb0bf; --faint: #66798a;
   --card: #1a2632; --line: #2c3a47;
   --wait-bg: #2d63ab; --wait-ink: #ffffff;
+  --scrim: rgba(0, 0, 0, .6);
   --soon-bg: #e8a92a; --soon-ink: #1f1500;
   --now-bg: #2a8a62; --now-ink: #ffffff;
   color-scheme: dark;
@@ -194,6 +203,33 @@ body {
   font-size: clamp(1rem, 3.4vw, 1.25rem);
 }
 .path .t { font-variant-numeric: tabular-nums; min-width: 5.2em; }
+.path li[data-pop] { cursor: pointer; }
+.path li[data-pop]:focus-visible { outline: 2px solid var(--muted); outline-offset: 4px; border-radius: 6px; }
+
+/* Pop-up card: plain card colours (not the blue or green of the main card) */
+.pop {
+  position: fixed; inset: 0; z-index: 10;
+  display: grid; place-items: center;
+  padding: 16px;
+  background: var(--bg);  /* solid, so the main card doesn't show behind */
+}
+.pop-card {
+  box-sizing: border-box; width: min(100%, 640px); max-width: 100%;  /* width set to the main card's on open */
+  background: var(--card); color: var(--ink);
+  border-radius: 28px;
+  padding: clamp(22px, 5vw, 48px);
+  display: grid; gap: clamp(10px, 2vh, 18px);
+  box-shadow: 0 18px 40px -12px rgba(0, 0, 0, .45);
+}
+.pop-tag {
+  text-align: center;
+  font-family: var(--display); font-weight: 700;
+  font-size: clamp(1.4rem, 6vw, 2.6rem); line-height: 1.15; white-space: nowrap;
+  padding: .12em .5em; border-radius: 999px;
+  background: var(--ink); color: var(--card);
+}
+/* .pop-name also has the main card's .name class, so it uses the same size */
+
 /* "Not Today": same muted text as Later Today, two lines per event */
 .path.upcoming { gap: 14px; }
 .path.upcoming li { display: grid; gap: 2px; }
@@ -229,6 +265,17 @@ body {
   </div>
 
   <section class="later" id="laterWrap"></section>
+
+  <div class="pop" id="pop" hidden>
+    <section class="pop-card" id="popCard" role="dialog" aria-live="polite">
+      <span class="pop-tag" id="popTag">Later Today</span>
+      <div class="pop-name name" id="popName"></div>
+      <div class="when" id="popDate" hidden></div>
+      <div class="when" id="popWhen"></div>
+      <div class="countdown" id="popCount"></div>
+      <div class="calm" id="popMsg" hidden></div>
+    </section>
+  </div>
 </main>
 
 <script>
@@ -262,7 +309,7 @@ function computeState(now) {
   const listOf = it => it.day === 1 ? tItems : items;
 
   // Warning for the next item wins over any "Now"
-  if (next.at - now <= SOON_MINUTES * MIN) {
+  if (next.at - now <= (next.soon ?? SOON_MINUTES) * MIN) {
     return { mode: "soon", item: next, rest: restAfter(listOf(next), next), restDay: next.day };
   }
   const current = [...today].reverse().find(s => s.at <= now && now - s.at < NOW_MINUTES * MIN);
@@ -303,16 +350,12 @@ function render() {
   card.className = "card " + (go ? "go" : st.mode === "soon" ? "next" : st.mode);
   const showInstr = (st.mode === "soon" || st.mode === "now") && st.item.instruction;
   let calm = st.item.message || null;
-  if (!calm && (st.mode === "next" || st.mode === "tomorrow") && st.item.reassure) {
-    const left = (st.item.at - now) / MIN;
-    const m = REASSURE.find(r => left > r.moreThan);
-    if (m) calm = m.text;
-  }
+  if (!calm && (st.mode === "next" || st.mode === "tomorrow")) calm = reassureText(st.item, (st.item.at - now) / MIN);
   $("tag").textContent = showInstr ? st.item.instruction
     : { next: "Next", soon: "Coming Up Soon", now: "Now", tomorrow: "Tomorrow" }[st.mode];
   $("calm").textContent = calm || "";
   $("calm").hidden = !calm;
-  $("name").textContent = st.item.name;
+  if ($("name").textContent !== st.item.name) { $("name").textContent = st.item.name; fitName($("name")); }
   $("when").textContent = "At " + fmtTime(st.item.time);
   // Keep the line's space during "Now" so nothing moves
   $("countdown").textContent = st.mode === "now" ? " " : fmtCountdown(st.item.at - now);
@@ -333,22 +376,25 @@ function render() {
     $("doneWrap").hidden = !showDone;
     const sections = [];
     if (st.restDay === 0) {
-      if (SHOW_LATER && st.rest.length) sections.push({ title: "Later today", items: st.rest });
-      if (SHOW_TOMORROW) sections.push({ title: "Tomorrow", items: itemsFor(tomorrowOf(now)) });
+      if (SHOW_LATER && st.rest.length) sections.push({ title: "Later today", items: st.rest, day: 0 });
+      if (SHOW_TOMORROW) sections.push({ title: "Tomorrow", items: itemsFor(tomorrowOf(now)), day: 1 });
     } else if (SHOW_TOMORROW && st.rest.length) {
-      sections.push({ title: "Later tomorrow", items: st.rest });
+      sections.push({ title: "Later tomorrow", items: st.rest, day: 1 });
     }
-    // Later Today and Not Today: no fading; items use the same muted grey as the headings
+    // Later Today and Not Today: no fading; items use the same muted grey as the headings.
+    // Every item can be tapped to show its pop-up (data-* carries what the pop-up needs).
     let html = sections.map(sec =>
       "<h2>" + sec.title + '</h2><ol class="path">' + sec.items.map(s =>
-        '<li><span class="t">' + fmtTime(s.time) + '</span><span>' + s.name + '</span></li>'
+        '<li data-pop="later" data-day="' + sec.day + '" data-time="' + s.time + '" data-name="' + esc(s.name) + '" data-msg="' + esc(s.message || "") + '" data-reassure="' + (wantsReassure(s) ? "1" : "") + '" data-soon="' + (s.soon ?? "") + '" tabindex="0" role="button">' +
+        '<span class="t">' + fmtTime(s.time) + '</span><span>' + esc(s.name) + '</span></li>'
       ).join("") + "</ol>"
     ).join("");
     // "Not Today": every one-off (dated) item after today, however far ahead
     const ups = SHOW_UPCOMING ? upcomingAfter(now) : [];
     if (ups.length) {
       html += '<h2>Not Today</h2><ol class="path upcoming">' + ups.map(u =>
-        '<li><span class="ev-name">' + u.name + " " + u.rel + '</span><span class="ev-when">' + u.when + "</span></li>").join("") + "</ol>";
+        '<li data-pop="up" data-date="' + u.date + '" data-time="' + u.time + '" data-name="' + esc(u.name) + '" data-msg="' + esc(u.message || "") + '" tabindex="0" role="button">' +
+        '<span class="ev-name">' + esc(u.name) + " " + u.rel + '</span><span class="ev-when">' + u.when + "</span></li>").join("") + "</ol>";
     }
     $("laterWrap").innerHTML = html;
     $("laterWrap").hidden = html === "";
@@ -370,7 +416,7 @@ function upcomingAfter(now) {
     .filter(u => u.diff >= 1)
     .sort((a, b) => a.day - b.day || a.time.localeCompare(b.time))
     .map(u => ({
-      name: u.name,
+      name: u.name, date: u.date, time: u.time, message: u.message,
       rel: u.diff === 1 ? "tomorrow" : "in " + u.diff + " days",
       when: DAYS[u.day.getDay()] + ", " + MONTHS[u.day.getMonth()] + " " + u.day.getDate() + " at " + fmtTime(u.time),
     }));
@@ -427,8 +473,92 @@ function fitDay() {
   const avail = $("card").getBoundingClientRect().width;
   $("clock").style.fontSize = Math.floor(avail / (widest / 100) * 0.97) + "px";
 }
-window.addEventListener("resize", () => { fitTag(); fitLater(); });
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { fitTag(); fitLater(); });
+/* Keep an item's name on one line: shrink it only as much as needed.
+   Short names keep the full size. A name too long even at the minimum size wraps instead. */
+function fitName(el) {
+  el.style.fontSize = "";
+  el.style.whiteSpace = "nowrap";
+  const base = parseFloat(getComputedStyle(el).fontSize);
+  const avail = el.clientWidth, need = el.scrollWidth;
+  if (!avail || need <= avail) return;
+  const min = Math.max(26, base * 0.6);
+  const size = Math.floor(base * avail / need * 0.98);
+  if (size >= min) el.style.fontSize = size + "px";
+  else { el.style.fontSize = min + "px"; el.style.whiteSpace = "normal"; }
+}
+
+/* ===== Reassurance messages ===== */
+function wantsReassure(s) { return s.reassure ?? REASSURE_ALL; }
+function reassureText(s, minutesLeft) {
+  if (!wantsReassure(s)) return null;
+  const m = REASSURE.find(r => minutesLeft > r.moreThan);
+  if (m) return m.text;
+  // An item with a shorter warning (soon: 5) keeps the last message until its warning starts
+  return minutesLeft > (s.soon ?? SOON_MINUTES) ? REASSURE[REASSURE.length - 1].text : null;
+}
+
+/* ===== Pop-up: tap a Later Today or Not Today item to see it as a full card ===== */
+function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+function daysAway(at, now) {
+  const a = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+  const b = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const n = Math.round((a - b) / 86400000);
+  return n === 1 ? "Tomorrow" : "in " + n + " days";
+}
+let popTimer = null, popTick = null;
+function openPop(d) {
+  closePop();
+  const isUp = d.pop === "up";
+  let at;
+  if (isUp) {
+    const [y, mo, dd] = d.date.split("-").map(Number);
+    const [h, m] = d.time.split(":").map(Number);
+    at = new Date(y, mo - 1, dd, h, m);
+    $("popDate").textContent = DAYS[at.getDay()] + ", " + MONTHS[at.getMonth()] + " " + at.getDate();
+  } else {
+    at = atTime(new Date(), d.time, Number(d.day));
+  }
+  $("popDate").hidden = !isUp;
+  $("popTag").textContent = isUp ? "Not Today" : (d.day === "1" ? "Tomorrow" : "Later Today");
+  $("popName").textContent = d.name;
+  $("popWhen").textContent = "At " + fmtTime(d.time);
+  // Not Today counts in days only; Later Today counts hours and minutes, like the main card
+  const update = () => {
+    const now = new Date();
+    $("popCount").textContent = isUp ? daysAway(at, now) : fmtCountdown(at - now);
+    // Same message the main card would show: the item's own message, or the reassurance
+    let msg = d.msg || "";
+    if (!msg && !isUp && d.reassure) {
+      msg = reassureText({ reassure: true, soon: d.soon === "" ? undefined : Number(d.soon) }, (at - now) / MIN) || "";
+    }
+    $("popMsg").textContent = msg;
+    $("popMsg").hidden = !msg;
+  };
+  // Same width and pill size as the main card
+  $("popCard").style.width = $("card").getBoundingClientRect().width + "px";
+  $("popTag").style.fontSize = getComputedStyle($("tag")).fontSize;
+  update();
+  popTick = setInterval(update, 1000);
+  $("pop").hidden = false;
+  fitName($("popName"));
+  popTimer = setTimeout(closePop, POPUP_SECONDS * 1000);
+}
+function closePop() {
+  clearTimeout(popTimer); clearInterval(popTick);
+  $("pop").hidden = true;
+}
+$("laterWrap").addEventListener("click", e => {
+  const li = e.target.closest("li[data-pop]");
+  if (li) openPop(li.dataset);
+});
+$("laterWrap").addEventListener("keydown", e => {
+  const li = e.target.closest("li[data-pop]");
+  if (li && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openPop(li.dataset); }
+});
+$("pop").addEventListener("click", closePop);  // tapping anywhere closes it early
+
+window.addEventListener("resize", () => { fitTag(); fitName($("name")); fitLater(); });
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { fitTag(); fitName($("name")); fitLater(); });
 
 /* Keep the screen awake where allowed */
 let lock = null;
