@@ -11,6 +11,7 @@ const SCHEDULE = [
   { time: "07:00", name: "Nurse's station", instruction: "Go Downstairs Now" },
   { time: "07:30", name: "Breakfast",       instruction: "Go Downstairs Now" },
   // soon: 5 = this item's warning starts 5 minutes before instead of SOON_MINUTES
+  { time: "09:00", name: "Outing with Lachlan", instruction: "Go Downstairs Now", days: ["Sun"], soon: 10 },
   // reassure: true / false = turn the REASSURE messages (below) on or off for one item, overriding REASSURE_ALL
   { time: "11:15", name: "Lunch",           instruction: "Go Downstairs Now", reassure: true },
   { time: "14:00", name: "Afternoon meds",  instruction: "Go Downstairs Now" },
@@ -19,7 +20,6 @@ const SCHEDULE = [
   { time: "19:00", name: "Mark's Sing Song",  message: "See if Mark is having a sing song tonight." },
   { time: "20:00", name: "Nighttime meds" },
   // One-off items (each shows only on its date)
-  { time: "09:00", name: "Outing with Lachlan", instruction: "Go Downstairs Now", days: ["Sunday"], soon: 5 },
   { time: "12:30", name: "Haircut",          instruction: "Go Downstairs Now", date: "2026-10-21" },
 ];
 const NOW_MINUTES = 15;   // how long an item shows as "Now"
@@ -36,7 +36,7 @@ const REASSURE = [
 const SHOW_DONE = true;      // "Done today"
 const SHOW_LATER = true;     // "Later today"
 const SHOW_TOMORROW = false; // "Tomorrow" (and "Later tomorrow" once today's items are finished)
-const SHOW_UPCOMING = true;  // "Not Today": every future item that has a date
+const SHOW_UPCOMING = true;  // "Not Today": future one-off items and the next date of weekly items (not daily ones)
 
 // Tapping a Later Today or Not Today item shows it as a pop-up card for this many seconds
 const POPUP_SECONDS = 5;
@@ -402,21 +402,32 @@ function render() {
   }
 }
 
-/* Future one-off items, soonest first, with their full date and how many days away */
+/* "Not Today": one-off items and the next date of weekly items, soonest first, with full date and days away */
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 function upcomingAfter(now) {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return SCHEDULE.filter(s => s.date)
-    .map(s => {
+  const list = [];
+  for (const s of SCHEDULE) {
+    if (s.date) {
+      // One-off item: its own date
       const [y, mo, d] = s.date.split("-").map(Number);
       const day = new Date(y, mo - 1, d);
       const diff = Math.round((day - today) / 86400000);
-      return { ...s, day, diff };
-    })
-    .filter(u => u.diff >= 1)
+      if (diff >= 1) list.push({ ...s, day, diff });
+    } else if (s.days && s.days.length < 7) {
+      // Weekly item: its next date. Skipped on its own day, when it's already in today's schedule.
+      if (s.days.includes(DAY_ABBR[today.getDay()])) continue;
+      for (let k = 1; k <= 7; k++) {
+        const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() + k);
+        if (s.days.includes(DAY_ABBR[day.getDay()])) { list.push({ ...s, day, diff: k }); break; }
+      }
+    }
+    // Daily items never appear here
+  }
+  return list
     .sort((a, b) => a.day - b.day || a.time.localeCompare(b.time))
     .map(u => ({
-      name: u.name, date: u.date, time: u.time, message: u.message,
+      name: u.name, date: ymd(u.day), time: u.time, message: u.message,
       rel: u.diff === 1 ? "tomorrow" : "in " + u.diff + " days",
       when: DAYS[u.day.getDay()] + ", " + MONTHS[u.day.getMonth()] + " " + u.day.getDate() + " at " + fmtTime(u.time),
     }));
